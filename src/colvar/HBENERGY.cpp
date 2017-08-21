@@ -129,13 +129,13 @@ void HBEnergy::calculate(){
   double value=k_hb*(1.0/d_ON+1.0/d_CH-1.0/d_OH-1.0/d_CN);
   
   double _d3_ON,_d3_CH,_d3_OH,_d3_CN;
-  _d3_ON=k_hb/std::pow(d3_ON,3);
-  _d3_CH=k_hb/std::pow(d3_CH,3);
-  _d3_OH=k_hb/std::pow(d3_OH,3);
-  _d3_CN=k_hb/std::pow(d3_CN,3);
+  _d3_ON=k_hb/std::pow(d_ON,3);
+  _d3_CH=k_hb/std::pow(d_CH,3);
+  _d3_OH=k_hb/std::pow(d_OH,3);
+  _d3_CN=k_hb/std::pow(d_CN,3);
   
-  setAtomsDerivatives(0,-v_CH*_d3_CH-v_CN*_d3_CN));
-  setAtomsDerivatives(1,-v_ON*_d3_ON-v_OH*_d3_OH));
+  setAtomsDerivatives(0,-v_CH*_d3_CH-v_CN*_d3_CN);
+  setAtomsDerivatives(1,-v_ON*_d3_ON-v_OH*_d3_OH);
   setAtomsDerivatives(2,+v_ON*_d3_ON+v_CN*_d3_CN);
   setAtomsDerivatives(3,+v_CH*_d3_CH+v_OH*_d3_OH);
 
