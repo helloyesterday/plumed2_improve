@@ -104,6 +104,7 @@ k_hb(11.66834)
   else    log.printf("  without periodic boundary conditions\n");
   
   addValueWithDerivatives();
+  setNotPeriodic();
   requestAtoms(atoms);
 }
 
@@ -139,8 +140,8 @@ void HBEnergy::calculate(){
   setAtomsDerivatives(2,+v_ON*_d3_ON+v_CN*_d3_CN);
   setAtomsDerivatives(3,+v_CH*_d3_CH+v_OH*_d3_OH);
 
-  setValue           (value);
   setBoxDerivativesNoPbc();
+  setValue(value);
 }
 
 }
