@@ -19,7 +19,8 @@
    You should have received a copy of the GNU Lesser General Public License
    along with plumed.  If not, see <http://www.gnu.org/licenses/>.
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ */
-#include "MultiColvar.h"
+#include "MultiColvarBase.h"
+#include "AtomValuePack.h"
 #include "tools/Torsion.h"
 #include "core/ActionRegister.h"
 
@@ -93,7 +94,7 @@ Similarly \@psi-4 tells plumed that you want to calculate the \f$\psi\f$ angle o
 */
 //+ENDPLUMEDOC
 
-class AlphaBeta2 : public MultiColvar {
+class AlphaBeta2 : public MultiColvarBase {
 private:
   std::vector<double> target1;
   std::vector<double> target2;
@@ -112,7 +113,7 @@ public:
 PLUMED_REGISTER_ACTION(AlphaBeta2,"ALPHABETA2")
 
 void AlphaBeta2::registerKeywords( Keywords& keys ){
-  MultiColvar::registerKeywords( keys );
+  MultiColvarBase::registerKeywords( keys );
   keys.use("ATOMS");
   keys.add("numbered","REFA","the reference values for each of the first torsional angles.");
   keys.add("numbered","REFB","the reference values for each of the second torsional angles.");
@@ -124,11 +125,13 @@ void AlphaBeta2::registerKeywords( Keywords& keys ){
 }
 
 AlphaBeta2::AlphaBeta2(const ActionOptions&ao):
-PLUMED_MULTICOLVAR_INIT(ao)
+  Action(ao),
+  MultiColvarBase(ao)
 {
   // Read in the atoms
-  int natoms=4; std::vector<AtomNumber> all_atoms;
-  readAtoms( natoms, all_atoms );
+  std::vector<AtomNumber> all_atoms;
+  readAtomsLikeKeyword( "ATOMS", 4, all_atoms );
+  setupMultiColvarBase( all_atoms );
   // Resize target
   target1.resize( getFullNumberOfTasks() );
   target2.resize( getFullNumberOfTasks() );
