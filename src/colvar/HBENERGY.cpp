@@ -115,6 +115,7 @@ void HBEnergy::calculate(){
   Vector v_ON,v_CH,v_OH,v_CN;
   
   if(pbc) makeWhole();
+  
   v_ON=delta(getPosition(1),getPosition(2));
   v_CH=delta(getPosition(0),getPosition(3));
   v_OH=delta(getPosition(1),getPosition(3));
@@ -135,10 +136,10 @@ void HBEnergy::calculate(){
   _d3_OH=k_hb/std::pow(d_OH,3);
   _d3_CN=k_hb/std::pow(d_CN,3);
   
-  setAtomsDerivatives(0,-v_CH*_d3_CH-v_CN*_d3_CN);
-  setAtomsDerivatives(1,-v_ON*_d3_ON-v_OH*_d3_OH);
-  setAtomsDerivatives(2,+v_ON*_d3_ON+v_CN*_d3_CN);
-  setAtomsDerivatives(3,+v_CH*_d3_CH+v_OH*_d3_OH);
+  setAtomsDerivatives(0,+v_CH*_d3_CH+v_CN*_d3_CN);
+  setAtomsDerivatives(1,+v_ON*_d3_ON+v_OH*_d3_OH);
+  setAtomsDerivatives(2,-v_ON*_d3_ON-v_CN*_d3_CN);
+  setAtomsDerivatives(3,-v_CH*_d3_CH-v_OH*_d3_OH);
 
   setBoxDerivativesNoPbc();
   setValue(value);

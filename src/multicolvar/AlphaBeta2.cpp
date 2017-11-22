@@ -38,7 +38,8 @@ Measures a distance including pbc between the instantaneous values of a set of t
 This colvar calculates the following quantity.
 
 \f[
-s = \frac{1}{2} \sum_i \left[ 1 + \cos( \phi_i - \phi_i^{\textrm{Ref}} ) \right]   
+s = \sum_i w_i \left[ \frac{\cos( \phi_i - \phi_i^{\textrm{Ref_B}} ) - \cos( \phi_i - \phi_i^{\textrm{Ref_A}} )}
+{2 - \cos( \phi_i - \phi_i^{\textrm{Ref_A}} ) - \cos( \phi_i - \phi_i^{\textrm{Ref_B}} )} \right]   
 \f]
 
 where the \f$\phi_i\f$ values are the instantaneous values for the \ref TORSION angles of interest.
@@ -50,9 +51,9 @@ The following provides an example of the input for an alpha beta similarity.
 
 \verbatim
 ALPHABETA ...
-ATOMS1=168,170,172,188 REFERENCE1=3.14 
-ATOMS2=170,172,188,190 REFERENCE2=3.14 
-ATOMS3=188,190,192,230 REFERENCE3=3.14
+ATOMS1=168,170,172,188 REFA1=3.14 REFB1=1.22
+ATOMS2=170,172,188,190 REFA2=3.14 REFB2=1.22
+ATOMS3=188,190,192,230 REFA3=3.14 REFB3=1.22
 LABEL=ab
 ... ALPHABETA
 PRINT ARG=ab FILE=colvar STRIDE=10
@@ -62,9 +63,9 @@ Because all the reference values are the same we can calculate the same quantity
 
 \verbatim
 ALPHABETA ...
-ATOMS1=168,170,172,188 REFERENCE=3.14 
-ATOMS2=170,172,188,190 
-ATOMS3=188,190,192,230 
+ATOMS1=168,170,172,188 REFA1=3.14 REFB1=1.22
+ATOMS2=170,172,188,190 REFA2=3.14 REFB2=1.22
+ATOMS3=188,190,192,230 REFA3=3.14 REFB3=1.22
 LABEL=ab
 ... ALPHABETA
 PRINT ARG=ab FILE=colvar STRIDE=10
@@ -77,9 +78,9 @@ about the topology of the protein molecule.  This means that you can specify tor
 \verbatim
 MOLINFO MOLTYPE=protein STRUCTURE=myprotein.pdb
 ALPHABETA ...
-ATOMS1=@phi-3 REFERENCE=3.14
-ATOMS2=@psi-3
-ATOMS3=@phi-4
+ATOMS1=@phi-3 REFA1=3.14 REFB1=1.22
+ATOMS2=@psi-3 REFA2=3.14 REFB2=1.22
+ATOMS3=@phi-4 REFA3=3.14 REFB3=1.22
 LABEL=ab
 ... ALPHABETA 
 PRINT ARG=ab FILE=colvar STRIDE=10
@@ -97,6 +98,10 @@ private:
   std::vector<double> target1;
   std::vector<double> target2;
   std::vector<double> csin12;
+  std::vector<double> weights;
+  double wnorm;
+  bool need_normal;
+  bool need_normal2;
 public:
   static void registerKeywords( Keywords& keys );
   explicit AlphaBeta2(const ActionOptions&);
@@ -111,6 +116,11 @@ void AlphaBeta2::registerKeywords( Keywords& keys ){
   keys.use("ATOMS");
   keys.add("numbered","REFA","the reference values for each of the first torsional angles.");
   keys.add("numbered","REFB","the reference values for each of the second torsional angles.");
+  keys.add("numbered","WEIGHT","A weight value for a given contact, by default is 1.0 "
+                               "You can either specify a global weight value using WEIGHT or one "
+                               "weight value for each contact."); 
+  keys.addFlag("NORMALIZE",false,"to normalize the weights as the summation of the values equal to 1");
+  keys.addFlag("NORMALIZE2",false,"to normalize the weights as the summation of the squre of values equal to 1");
 }
 
 AlphaBeta2::AlphaBeta2(const ActionOptions&ao):
@@ -123,6 +133,8 @@ PLUMED_MULTICOLVAR_INIT(ao)
   target1.resize( getFullNumberOfTasks() );
   target2.resize( getFullNumberOfTasks() );
   csin12.resize( getFullNumberOfTasks() );
+  // Resize weights
+  weights.assign( getFullNumberOfTasks() ,1);
   // Setup central atom indices
   std::vector<bool> catom_ind(4, false); 
   catom_ind[1]=catom_ind[2]=true;
@@ -143,6 +155,35 @@ PLUMED_MULTICOLVAR_INIT(ao)
 		 error("Can't find REFB"+eno+"!");
 	 }
 	 csin12[i]=sin((target1[i]-target2[i])/2.0);
+  }
+  
+  // Read in weights
+  unsigned nweights=0;
+  for(unsigned i=0;i<weights.size();++i){
+     if( !parseNumbered( "WEIGHT", i+1, weights[i] ) ) break;
+     nweights++; 
+  }
+  if(nweights!=0 && nweights!=weights.size() ){
+      error("found wrong number of WEIGHT values");
+  }
+  
+  parseFlag("NORMALIZE",need_normal);
+  parseFlag("NORMALIZE2",need_normal2);
+  if(need_normal&&need_normal2)
+      error("FLAG \"NORMALIZE\" and \"NORMALIZE2\" can be only accepted one!");
+  if(need_normal)
+  {
+	  wnorm=0;
+      for(unsigned i=0;i!=weights.size();++i)
+         wnorm+=weights[i];
+      for(unsigned i=0;i!=weights.size();++i)
+         weights[i]/=wnorm;
+  }
+  else if(need_normal2)
+  {
+	  wnorm=norm(weights);
+      for(unsigned i=0;i!=weights.size();++i)
+         weights[i]/=wnorm;
   }
 
   // And setup the ActionWithVessel
@@ -169,8 +210,8 @@ double AlphaBeta2::compute( const unsigned& tindex, AtomValuePack& myatoms ) con
   const double vsin1  = sin((target1[tindex]-value)/2.0);
   const double vsin2  = sin((target2[tindex]-value)/2.0);
   const double v2cos  = 2.0-vcos1-vcos2;
-  const double svalue = 8*csin12[tindex]*vsin1*vsin2/(v2cos*v2cos);
-  const double cvalue = (vcos2-vcos1)/v2cos;
+  const double svalue = 8*csin12[tindex]*vsin1*vsin2/(v2cos*v2cos)*weights[tindex];
+  const double cvalue = (vcos2-vcos1)/v2cos*weights[tindex];
 
   dd0 *= svalue;
   dd1 *= svalue;
