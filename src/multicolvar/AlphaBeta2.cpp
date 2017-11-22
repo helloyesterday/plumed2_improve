@@ -114,7 +114,12 @@ PLUMED_REGISTER_ACTION(AlphaBeta2,"ALPHABETA2")
 
 void AlphaBeta2::registerKeywords( Keywords& keys ){
   MultiColvarBase::registerKeywords( keys );
-  keys.use("ATOMS");
+  keys.add("numbered","ATOMS","the atoms involved in each of the alpha-beta variables you wish to calculate. "
+           "Keywords like ATOMS1, ATOMS2, ATOMS3,... should be listed and one alpha-beta values will be "
+           "calculated for each ATOM keyword you specify (all ATOM keywords should "
+           "specify the indices of four atoms).  The eventual number of quantities calculated by this "
+           "action will depend on what functions of the distribution you choose to calculate.");
+  keys.reset_style("ATOMS","atoms");
   keys.add("numbered","REFA","the reference values for each of the first torsional angles.");
   keys.add("numbered","REFB","the reference values for each of the second torsional angles.");
   keys.add("numbered","WEIGHT","A weight value for a given contact, by default is 1.0 "
