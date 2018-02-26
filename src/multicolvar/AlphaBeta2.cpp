@@ -39,7 +39,8 @@ Measures a distance including pbc between the instantaneous values of a set of t
 This colvar calculates the following quantity.
 
 \f[
-s = \frac{1}{2} \sum_i \left[ 1 + \cos( \phi_i - \phi_i^{\textrm{Ref}} ) \right]
+s = \sum_i w_i \left[ \frac{\cos( \phi_i - \phi_i^{\textrm{Ref_B}} ) - \cos( \phi_i - \phi_i^{\textrm{Ref_A}} )}
+{2 - \cos( \phi_i - \phi_i^{\textrm{Ref_A}} ) - \cos( \phi_i - \phi_i^{\textrm{Ref_B}} )} \right]   
 \f]
 
 where the \f$\phi_i\f$ values are the instantaneous values for the \ref TORSION angles of interest.
@@ -49,44 +50,44 @@ The \f$\phi_i^{\textrm{Ref}}\f$ values are the user-specified reference values f
 
 The following provides an example of the input for an alpha beta similarity.
 
-\plumedfile
-ALPHABETA2 ...
+\verbatim
+ALPHABETA ...
 ATOMS1=168,170,172,188 REFA1=3.14 REFB1=1.22
 ATOMS2=170,172,188,190 REFA2=3.14 REFB2=1.22
 ATOMS3=188,190,192,230 REFA3=3.14 REFB3=1.22
 LABEL=ab
-... ALPHABETA2
+... ALPHABETA
 PRINT ARG=ab FILE=colvar STRIDE=10
-\endplumedfile
+\endverbatim
 
 Because all the reference values are the same we can calculate the same quantity using
 
-\plumedfile
-ALPHABETA2 ...
+\verbatim
+ALPHABETA ...
 ATOMS1=168,170,172,188 REFA1=3.14 REFB1=1.22
 ATOMS2=170,172,188,190 REFA2=3.14 REFB2=1.22
 ATOMS3=188,190,192,230 REFA3=3.14 REFB3=1.22
 LABEL=ab
-... ALPHABETA2
+... ALPHABETA
 PRINT ARG=ab FILE=colvar STRIDE=10
-\endplumedfile
+\endverbatim
 
 Writing out the atoms involved in all the torsions in this way can be rather tedious. Thankfully if you are working with protein you
-can avoid this by using the \ref MOLINFO command.  PLUMED uses the pdb file that you provide to this command to learn
+can avoid this by using the \ref MOLINFO command.  PLUMED uses the pdb file that you provide to this command to learn 
 about the topology of the protein molecule.  This means that you can specify torsion angles using the following syntax:
 
-\plumedfile
+\verbatim
 MOLINFO MOLTYPE=protein STRUCTURE=myprotein.pdb
-ALPHABETA2 ...
+ALPHABETA ...
 ATOMS1=@phi-3 REFA1=3.14 REFB1=1.22
 ATOMS2=@psi-3 REFA2=3.14 REFB2=1.22
 ATOMS3=@phi-4 REFA3=3.14 REFB3=1.22
 LABEL=ab
-... ALPHABETA2
+... ALPHABETA 
 PRINT ARG=ab FILE=colvar STRIDE=10
-\endplumedfile
+\endverbatim
 
-Here, \@phi-3 tells plumed that you would like to calculate the \f$\phi\f$ angle in the third residue of the protein.
+Here, \@phi-3 tells plumed that you would like to calculate the \f$\phi\f$ angle in the third residue of the protein.  
 Similarly \@psi-4 tells plumed that you want to calculate the \f$\psi\f$ angle of the 4th residue of the protein.
 
 
@@ -120,19 +121,21 @@ void AlphaBeta2::registerKeywords( Keywords& keys ) {
            "action will depend on what functions of the distribution you choose to calculate.");
   keys.reset_style("ATOMS","atoms");
   keys.add("numbered","REFA","the reference values for each of the first torsional angles.");
+  keys.reset_style("REFA","compulsory");
   keys.add("numbered","REFB","the reference values for each of the second torsional angles.");
+  keys.reset_style("REFB","compulsory");
   keys.add("numbered","WEIGHT","A weight value for a given contact, by default is 1.0 "
                                "You can either specify a global weight value using WEIGHT or one "
                                "weight value for each contact."); 
   keys.addFlag("NORMALIZE",false,"to normalize the weights as the summation of the values equal to 1");
   keys.addFlag("NORMALIZE2",false,"to normalize the weights as the summation of the squre of values equal to 1");
-  keys.reset_style("REFERENCE","compulsory");
 }
 
 AlphaBeta2::AlphaBeta2(const ActionOptions&ao):
   Action(ao),
   MultiColvarBase(ao)
 {
+	
   // Read in the atoms
   std::vector<AtomNumber> all_atoms;
   readAtomsLikeKeyword( "ATOMS", 4, all_atoms );
@@ -162,7 +165,7 @@ AlphaBeta2::AlphaBeta2(const ActionOptions&ao):
 		 Tools::convert(int(i+1),eno);
 		 error("Can't find REFB"+eno+"!");
 	 }
-	 csin12[i]=sin((target1[i]-target2[i])/2.0);
+	 csin12[i]=sin((target2[i]-target1[i])/2.0);
   }
   
   // Read in weights
@@ -201,7 +204,6 @@ AlphaBeta2::AlphaBeta2(const ActionOptions&ao):
     addVessel( "SUM", fake_input, -1 );  // -1 here means that this value will be named getLabel()
     readVesselKeywords();  // This makes sure resizing is done
   }
-
   // And check everything has been read in correctly
   checkRead();
 }
@@ -220,7 +222,7 @@ double AlphaBeta2::compute( const unsigned& tindex, AtomValuePack& myatoms ) con
   const double vsin2  = sin((target2[tindex]-value)/2.0);
   const double v2cos  = 2.0-vcos1-vcos2;
   const double svalue = 8*csin12[tindex]*vsin1*vsin2/(v2cos*v2cos)*weights[tindex];
-  const double cvalue = (vcos2-vcos1)/v2cos*weights[tindex];
+  const double cvalue = (vcos1-vcos2)/v2cos*weights[tindex];
 
   dd0 *= svalue;
   dd1 *= svalue;
