@@ -22,6 +22,7 @@
 #include "MultiColvarBase.h"
 #include "AtomValuePack.h"
 #include "tools/Torsion.h"
+#include "core/PlumedMain.h"
 #include "core/ActionRegister.h"
 
 #include <string>
@@ -206,6 +207,9 @@ AlphaBeta2::AlphaBeta2(const ActionOptions&ao):
   }
   // And check everything has been read in correctly
   checkRead();
+  
+  log<<"  Bibliography "<<plumed.cite("Yang and Parrinello, J. Chem. Theory Comput. 14, 2889 (2018)");
+  log<<"\n";
 }
 
 double AlphaBeta2::compute( const unsigned& tindex, AtomValuePack& myatoms ) const {
