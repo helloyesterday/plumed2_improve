@@ -38,24 +38,6 @@ NeighborList2D::NeighborList2D(const vector<AtomNumber>& list0, const vector<Ato
   do_pair_(do_pair), do_pbc_(do_pbc), pbc_(&pbc),
   distance_(distance),axis_id(_axis_id),axis_cut(_axis_cut), stride_(stride)
 {
-  if(axis_id==0)
-  {
-	 map_id1=1;
-	 map_id2=2;
-  }
-  else if(axis_id==1)
-  {
-	 map_id1=0;
-	 map_id2=2;
-  }
-  else if(axis_id==2)
-  {
-	 map_id1=0;
-	 map_id2=1;
-  }
-  else
-    plumed_merror("axis_id must be 0, 1 or 2");
-    
 // store full list of atoms needed
   fullatomlist_=list0;
   fullatomlist_.insert(fullatomlist_.end(),list1.begin(),list1.end());
@@ -87,6 +69,11 @@ NeighborList2D::NeighborList2D(const vector<AtomNumber>& list0, const bool& do_p
 }
 
 void NeighborList2D::initialize() {
+  if(axis_id==0) {map_id1=1;map_id2=2;}
+  else if(axis_id==1) {map_id1=0;map_id2=2;}
+  else if(axis_id==2) {map_id1=0;map_id2=1;}
+  else plumed_merror("axis_id must be 0, 1 or 2");
+  
   neighbors_.clear();
   for(unsigned int i=0; i<nallpairs_; ++i) {
     neighbors_.push_back(getIndexPair(i));

@@ -142,7 +142,7 @@ void DebyeScatter::registerKeywords( Keywords& keys ) {
   keys.add("atoms","ATOMS","First list of atoms");
   keys.add("compulsory","THETA","Diffraction angles");
   keys.add("compulsory","LAMBDA","0.15406","Wavelength of the incident wave");
-  keys.add("compulsory","MAXR","1.5","Maximum distance for the radial distribution function ");
+  keys.add("compulsory","MAXR","3.0","Maximum distance for the radial distribution function ");
   keys.add("optional","QBIN","Number of grid bins of intensity when use GRID_INTENSITY");
   keys.add("optional","NL_CUTOFF","The cutoff for the neighbour list");
   keys.add("optional","NL_STRIDE","The frequency with which we are updating the atoms in the neighbour list");
@@ -164,6 +164,11 @@ DebyeScatter::DebyeScatter(const ActionOptions&ao):
   bool nopbc=!pbc;
   parseFlag("NOPBC",nopbc);
   pbc=!nopbc;
+    
+  parse("LAMBDA",lambda);
+  parse("THETA",theta);
+  parse("MAXR",maxr);
+  parse("QBIN",qbin);
 
 // neighbor list stuff
   bool doneigh=false;
@@ -173,6 +178,7 @@ DebyeScatter::DebyeScatter(const ActionOptions&ao):
   if(doneigh) {
     parse("NL_CUTOFF",nl_cut);
     if(nl_cut<=0.0) error("NL_CUTOFF should be explicitly specified and positive");
+    if(nl_cut<maxr) error("NL_CUTOFF should not be smaller than MAXR");
     parse("NL_STRIDE",nl_st);
     if(nl_st<=0) error("NL_STRIDE should be explicitly specified and positive");
   }
@@ -188,11 +194,6 @@ DebyeScatter::DebyeScatter(const ActionOptions&ao):
   requestAtoms(nl->getFullAtomList());
   
   qnum=ga_lista.size();
-  
-  parse("LAMBDA",lambda);
-  parse("THETA",theta);
-  parse("MAXR",maxr);
-  parse("QBIN",qbin);
 
   checkRead();
   
@@ -207,42 +208,41 @@ DebyeScatter::DebyeScatter(const ActionOptions&ao):
 
   if(use_grid)
   {
-	  plumed_massert(qbin>0,"QBIN must be larger than 0!");
-	  preintensity.assign(qbin,0);
-	  prederivsf.assign(qbin,0);
-	  for(unsigned j=0;j!=qbin;++j)
-	  {
-		double r = deltad*(j+0.5);
-        double qr = q*r;
-        double r2 = r*r;
-        double sinqr = std::sin(qr);
-        double cosqr = std::cos(qr);
+    plumed_massert(qbin>0,"QBIN must be larger than 0!");
+    preintensity.assign(qbin,0);
+    prederivsf.assign(qbin,0);
+    for(unsigned j=0;j!=qbin;++j)
+    {
+      double r = deltad*(j+0.5);
+      double qr = q*r;
+      double r2 = r*r;
+      double sinqr = std::sin(qr);
+      double cosqr = std::cos(qr);
       
-        double v_ij = sinqr/qr;
-        double dv_ij = (qr*cosqr-sinqr)/(q*r2);
+      double v_ij = sinqr/qr;
+      double dv_ij = (qr*cosqr-sinqr)/(q*r2);
       
-        double intensity=1;
-        double devrf=0;
-        if(usew)
-        {
-          double pi_rc= pi*r/maxr;
-          double sin_pi_rc = std::sin(pi_rc);
-          double cos_pi_rc = std::cos(pi_rc);
-          double w_ij = sin_pi_rc/pi_rc;
-          double dw_ij = (pi_rc*cos_pi_rc-sin_pi_rc)/(pi*r2/maxr);
-        
-          intensity = 2.0 * fij2 * v_ij * w_ij / qnum;
-          devrf = 2.0 * fij2 * (dv_ij * w_ij + v_ij * dw_ij) / qnum;
-        }
-        else
-        {
-		  intensity = 2.0 * fij2 * v_ij/ qnum;
-          devrf = 2.0 * fij2 * dv_ij / qnum;
-	    }
-	    
+      double intensity=1;
+      double devrf=0;
+      if(usew)
+      {
+        double pi_rc= pi*r/maxr;
+        double sin_pi_rc = std::sin(pi_rc);
+        double cos_pi_rc = std::cos(pi_rc);
+        double w_ij = sin_pi_rc/pi_rc;
+        double dw_ij = (pi_rc*cos_pi_rc-sin_pi_rc)/(pi*r2/maxr);
+      
+        intensity = 2.0 * fij2 * v_ij * w_ij / qnum;
+        devrf = 2.0 * fij2 * (dv_ij * w_ij + v_ij * dw_ij) / qnum;
+      }
+      else
+      {
+        intensity = 2.0 * fij2 * v_ij/ qnum;
+        devrf = 2.0 * fij2 * dv_ij / qnum;
+	  }
 		preintensity[j] = intensity;
 		prederivsf[j] = devrf;
-	  }
+	}
   }
 
   log.printf("  ATOMS:\n");

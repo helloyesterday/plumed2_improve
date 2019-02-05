@@ -145,7 +145,7 @@ void DebyeScatter2D::registerKeywords( Keywords& keys ) {
   Colvar::registerKeywords(keys);
   keys.addFlag("SERIAL",false,"Perform the calculation in serial - for debug purpose");
   keys.addFlag("NLIST",false,"Use a neighbour list to speed up the calculation");
-  //~ keys.addFlag("USE_WINDOW",false,"Use a window function to revise the finite box");
+  keys.addFlag("USE_WINDOW",false,"Use a window function to revise the finite box");
   keys.addFlag("GRID_INTENSITY",false,"Use a grid to caluculate the intensity by distance");
   keys.add("atoms","ATOMS","First list of atoms");
   keys.add("compulsory","MAP_AXIS","the coordinate axis (x,y or z) to map the atom coordinates to calculate 2D XRD");
@@ -176,10 +176,6 @@ DebyeScatter2D::DebyeScatter2D(const ActionOptions&ao):
   parseFlag("NOPBC",nopbc);
   pbc=!nopbc;
   
-  parse("LAMBDA",lambda);
-  parse("THETA",theta);
-  parse("MAXR",maxr);
-  parse("QBIN",qbin);
   parse("MAP_AXIS",map_axis);
   
   do_axiscut=false;
@@ -212,6 +208,11 @@ DebyeScatter2D::DebyeScatter2D(const ActionOptions&ao):
   else
     plumed_merror("Cannot understand MAP_AXIS \""+map_axis+"\", please use x, y or z");
 
+  parse("LAMBDA",lambda);
+  parse("THETA",theta);
+  parse("MAXR",maxr);
+  parse("QBIN",qbin);
+
 // neighbor list stuff
   bool doneigh=false;
   double nl_cut=0.0;
@@ -229,7 +230,7 @@ DebyeScatter2D::DebyeScatter2D(const ActionOptions&ao):
     if(nl_axis_cut<axis_maxr) error("NL_AXIS_CUTOFF should not be smaller than AXIS_MAXR");
   }
   
-  //~ parseFlag("USE_WINDOW",usew);
+  parseFlag("USE_WINDOW",usew);
   parseFlag("GRID_INTENSITY",use_grid);
 
   addValueWithDerivatives(); setNotPeriodic();
@@ -240,7 +241,6 @@ DebyeScatter2D::DebyeScatter2D(const ActionOptions&ao):
   requestAtoms(nl->getFullAtomList());
   
   qnum=ga_lista.size();
-
 
   checkRead();
   
@@ -255,8 +255,8 @@ DebyeScatter2D::DebyeScatter2D(const ActionOptions&ao):
 
   if(use_grid)
   {
-	plumed_massert(qbin>0,"QBIN must be larger than 0!");
-    preintensity.assign(qbin,0);
+    plumed_massert(qbin>0,"QBIN must be larger than 0!");
+    preintensity.assign(qbin,1);
     prederivsf.assign(qbin,0);
 	for(unsigned j=0;j!=qbin;++j)
 	{
@@ -266,19 +266,26 @@ DebyeScatter2D::DebyeScatter2D(const ActionOptions&ao):
       double v_ij  = std::tr1::cyl_bessel_j(0,qr);
       double dv_ij = -1.0*q*std::tr1::cyl_bessel_j(1,qr);
       
-      //~ double w_ij=1;
-      //~ double dw_ij=0;
+      double intensity=1;
+      double devrf=0;
       //~ if(usew)
       //~ {
+        //~ double w_ij=1;
+        //~ double dw_ij=0;
       	//~ double pi_rc= pi*r/maxr;
       	//~ w_ij  = std::tr1::cyl_bessel_j(0,pi_rc);
       	//~ dw_ij = (pi/maxr)*std::tr1::cyl_bessel_j(1,pi_rc);
+      	//~ intensity =  = 2.0 * fij2 * v_ij * w_ij / qnum;
+        //~ devrf= 2.0 * fij2 * (dv_ij * w_ij + v_ij * dw_ij) / qnum;
       //~ }
-      
-      //~ preintensity[j] = 2.0 * fij2 * v_ij * w_ij / qnum;
-      //~ prederivsf[j]= 2.0 * fij2 * (dv_ij * w_ij + v_ij * dw_ij) / qnum;
-      preintensity[j] = 2.0 * fij2 * v_ij / qnum;
-      prederivsf[j]= 2.0 * fij2 * dv_ij / qnum;
+      //~ else
+      //~ {
+        intensity = 2.0 * fij2 * v_ij / qnum;
+        devrf = 2.0 * fij2 * dv_ij / qnum;;
+	  //~ }
+
+      preintensity[j] = intensity;
+      prederivsf[j] = devrf;
 	}
   }
 
@@ -332,7 +339,6 @@ void DebyeScatter2D::prepare() {
 // calculator
 void DebyeScatter2D::calculate()
 {
-
   double fin_intensity=0.;
   Tensor virial;
   vector<Vector> deriv(getNumberOfAtoms());
@@ -391,13 +397,11 @@ void DebyeScatter2D::calculate()
       sum+=1.0;
 
       double dfunc=0.;
-      //~ double dis_mod=distance.modulo();
       double dis_mod=std::sqrt(distance[map_id1]*distance[map_id1]+distance[map_id2]*distance[map_id2]);
       fin_intensity += pairing(dis_mod, dfunc,i0,i1);
 
       Vector norm_dis(distance/dis_mod);
       Vector dd(dfunc*norm_dis);
-      //~ distance[axis_id]=axis_dis;
       Tensor vv(dd,distance);
       if(nt>1) {
         omp_deriv[i0]-=dd;
@@ -429,7 +433,6 @@ void DebyeScatter2D::calculate()
   for(unsigned i=0; i<deriv.size(); ++i) setAtomsDerivatives(i,deriv[i]);
   setValue           (fin_intensity);
   setBoxDerivatives  (virial);
-
 }
 
 double DebyeScatter2D::pairing(double distance,double&dfunc,unsigned i,unsigned j)const {
@@ -455,19 +458,27 @@ double DebyeScatter2D::pairing(double distance,double&dfunc,unsigned i,unsigned 
       double qr = q*r;
       double v_ij  = std::tr1::cyl_bessel_j(0,qr);
       double dv_ij = -1.0*q*std::tr1::cyl_bessel_j(1,qr);
-      //~ double w_ij=1;
-      //~ double dw_ij=0;
+      
+      double intensity=1;
+      double devrf=0;
       //~ if(usew)
       //~ {
+        //~ double w_ij=1;
+        //~ double dw_ij=0;
       	//~ double pi_rc= pi*r/maxr;
       	//~ w_ij  = std::tr1::cyl_bessel_j(0,pi_rc);
       	//~ dw_ij = (pi/maxr)*std::tr1::cyl_bessel_j(1,pi_rc);
+      	//~ intensity =  = 2.0 * fij2 * v_ij * w_ij / qnum;
+        //~ devrf= 2.0 * fij2 * (dv_ij * w_ij + v_ij * dw_ij) / qnum;
       //~ }
+      //~ else
+      //~ {
+        intensity = 2.0 * fij2 * v_ij / qnum;
+        devrf = 2.0 * fij2 * dv_ij / qnum;;
+	  //~ }
       
-      //~ dfunc = 2.0 * fij2 * (dv_ij * w_ij + v_ij * dw_ij) / qnum;
-      //~ return 2.0 * fij2 * v_ij * w_ij / qnum;
-      dfunc = 2.0 * fij2 * dv_ij / qnum;
-      return 2.0 * fij2 * v_ij / qnum;
+      dfunc = devrf;
+      return intensity;
 	}
   }
   else
