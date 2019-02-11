@@ -20,7 +20,7 @@
    along with plumed.  If not, see <http://www.gnu.org/licenses/>.
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ */
 #include "Colvar.h"
-#include "tools/NeighborList2D.h"
+#include "tools/NeighborList2DParallel.h"
 #include "tools/Communicator.h"
 #include "tools/OpenMP.h"
 #include "ActionRegister.h"
@@ -103,12 +103,15 @@ PRINT ARG=c1,c2 STRIDE=10
 class DebyeScatter2D : public Colvar {
   bool pbc;
   bool serial;
-  std::unique_ptr<NeighborList2D> nl;
+  NeighborList2DParallel* nl;
   bool invalidateList;
   bool firsttime;
   bool usew;
   bool use_grid;
-  bool do_axiscut;
+  bool doneigh;
+  
+// Low communication variant
+  //~ bool doLowComm;
   
   double theta;
   double maxr;
@@ -123,11 +126,13 @@ class DebyeScatter2D : public Colvar {
   unsigned qnum;
   unsigned axis_id;
   unsigned map_id1,map_id2;
+  std::vector<double> preintensity;
+  std::vector<double> prederivsf;
   
   std::string map_axis;
   
-  std::vector<double> preintensity;
-  std::vector<double> prederivsf;
+  inline void calc_value(const Vector&,double&,Vector&,Vector&,Tensor&);
+  inline void calc_value(const Vector&,double&,Vector&,Tensor&);
 
 public:
   explicit DebyeScatter2D(const ActionOptions&);
@@ -136,7 +141,7 @@ public:
 // active methods:
   virtual void calculate();
   virtual void prepare();
-  virtual double pairing(double distance,double&dfunc,unsigned i,unsigned j)const;
+  inline double pairing(double distance,double&dfunc)const;
 };
 
 PLUMED_REGISTER_ACTION(DebyeScatter2D,"DEBYE_SCATTER_2D")
@@ -147,16 +152,19 @@ void DebyeScatter2D::registerKeywords( Keywords& keys ) {
   keys.addFlag("NLIST",false,"Use a neighbour list to speed up the calculation");
   keys.addFlag("USE_WINDOW",false,"Use a window function to revise the finite box");
   keys.addFlag("GRID_INTENSITY",false,"Use a grid to caluculate the intensity by distance");
+  //~ keys.addFlag("LOW_COMM",false,"Use an algorithm with less communication between processors");
   keys.add("atoms","ATOMS","First list of atoms");
-  keys.add("compulsory","MAP_AXIS","the coordinate axis (x,y or z) to map the atom coordinates to calculate 2D XRD");
   keys.add("compulsory","THETA","Diffraction angles");
   keys.add("compulsory","LAMBDA","0.15406","Wavelength of the incident wave");
-  keys.add("compulsory","MAXR","3.0","Maximum distance for the radial distribution function ");
-  keys.add("optional","QBIN","Number of grid bins of intensity when use GRID_INTENSITY");
+  keys.add("compulsory","MAXR","2.7","Maximum distance for the radial distribution function ");
+  keys.add("compulsory","MAP_AXIS","the coordinate axis (x,y or z) to map the atom coordinates to calculate 2D XRD");
+  keys.add("compulsory","AXIS_MAXR","1.6","the cutoff for mapping the coordinate axis");
+  keys.add("compulsory","NL_SKIN","0.08","skin of neighbor list");
+  keys.add("compulsory","NL_AXIS_SKIN","0.045","skin of neighbor list at axis");
   keys.add("optional","NL_CUTOFF","The cutoff for the neighbour list");
   keys.add("optional","NL_AXIS_CUTOFF","The cutoff for the mapping axis on the neighbour list");
   keys.add("optional","NL_STRIDE","The frequency with which we are updating the atoms in the neighbour list");
-  keys.add("optional","AXIS_MAXR","the cutoff for mapping the coordinate axis");
+  keys.add("optional","QBIN","Number of grid bins of intensity when use GRID_INTENSITY");
 }
 
 DebyeScatter2D::DebyeScatter2D(const ActionOptions&ao):
@@ -169,20 +177,20 @@ DebyeScatter2D::DebyeScatter2D(const ActionOptions&ao):
 
   parseFlag("SERIAL",serial);
 
-  vector<AtomNumber> ga_lista;
-  parseAtomList("ATOMS",ga_lista);
+  vector<AtomNumber> atoms_lista;
+  parseAtomList("ATOMS",atoms_lista);
 
   bool nopbc=!pbc;
   parseFlag("NOPBC",nopbc);
   pbc=!nopbc;
+    
+  parse("LAMBDA",lambda);
+  parse("THETA",theta);
+  parse("MAXR",maxr);
+  parse("QBIN",qbin);
   
   parse("MAP_AXIS",map_axis);
-  
-  do_axiscut=false;
-  axis_maxr=-1;
   parse("AXIS_MAXR",axis_maxr);
-  if(axis_maxr>0)
-	  do_axiscut=true;
 
   if(map_axis=="x"||map_axis=="X"||map_axis=="0")
   {
@@ -208,17 +216,18 @@ DebyeScatter2D::DebyeScatter2D(const ActionOptions&ao):
   else
     plumed_merror("Cannot understand MAP_AXIS \""+map_axis+"\", please use x, y or z");
 
-  parse("LAMBDA",lambda);
-  parse("THETA",theta);
-  parse("MAXR",maxr);
-  parse("QBIN",qbin);
-
 // neighbor list stuff
-  bool doneigh=false;
-  double nl_cut=0.0;
-  double nl_axis_cut=0.0;
+  doneigh=false;
+  bool nl_full_list=false;
+  double nl_skin;
+  double nl_axis_skin;
   int nl_st=0;
   parseFlag("NLIST",doneigh);
+  parse("NL_SKIN",nl_skin);
+  parse("NL_AXIS_SKIN",nl_axis_skin);
+  
+  double nl_cut=maxr+3*nl_skin;
+  double nl_axis_cut=axis_maxr+3*nl_axis_skin;
   if(doneigh) {
     parse("NL_CUTOFF",nl_cut);
     if(nl_cut<=0.0) error("NL_CUTOFF should be explicitly specified and positive");
@@ -226,23 +235,32 @@ DebyeScatter2D::DebyeScatter2D(const ActionOptions&ao):
     parse("NL_STRIDE",nl_st);
     if(nl_st<=0) error("NL_STRIDE should be explicitly specified and positive");
     parse("NL_AXIS_CUTOFF",nl_axis_cut);
-    if(nl_st<=0.0) error("NL_AXIS_CUTOFF should be explicitly specified and positive");
     if(nl_axis_cut<axis_maxr) error("NL_AXIS_CUTOFF should not be smaller than AXIS_MAXR");
   }
   
   parseFlag("USE_WINDOW",usew);
   parseFlag("GRID_INTENSITY",use_grid);
+  
+  //~ doLowComm=false;
+  //~ parseFlag("LOW_COMM",doLowComm);
+  //~ if (doLowComm) {
+     //~ nl_full_list=true;
+     //~ if (!doneigh) error("LOW_COMM can only be used with neighbor lists");
+  //~ }
 
   addValueWithDerivatives(); setNotPeriodic();
 
-  if(doneigh)  nl.reset( new NeighborList2D(ga_lista,pbc,getPbc(),nl_cut,axis_id,nl_axis_cut,nl_st) );
-  else         nl.reset( new NeighborList2D(ga_lista,pbc,getPbc()) );
-
-  requestAtoms(nl->getFullAtomList());
-  
-  qnum=ga_lista.size();
-
   checkRead();
+  
+  // Setup neighbor list
+  if (doneigh) {
+    nl= new NeighborList2DParallel(atoms_lista,pbc,getPbc(),comm,log,axis_id,nl_cut,nl_axis_cut,nl_full_list,nl_st,nl_skin,nl_axis_skin);
+    requestAtoms(nl->getFullAtomList());
+  } else {
+    requestAtoms(atoms_lista);
+  }
+  
+  qnum=getNumberOfAtoms();
   
   deltad=maxr/qbin;
   
@@ -256,10 +274,10 @@ DebyeScatter2D::DebyeScatter2D(const ActionOptions&ao):
   if(use_grid)
   {
     plumed_massert(qbin>0,"QBIN must be larger than 0!");
-    preintensity.assign(qbin,1);
+    preintensity.assign(qbin,0);
     prederivsf.assign(qbin,0);
-	for(unsigned j=0;j!=qbin;++j)
-	{
+    for(unsigned j=0;j!=qbin;++j)
+    {
       double r = deltad*(j+0.5);
       double qr = q*r;
       
@@ -280,8 +298,8 @@ DebyeScatter2D::DebyeScatter2D(const ActionOptions&ao):
       //~ }
       //~ else
       //~ {
-        intensity = 2.0 * fij2 * v_ij / qnum;
-        devrf = 2.0 * fij2 * dv_ij / qnum;;
+        intensity = fij2 * v_ij / qnum;
+        devrf = fij2 * dv_ij / qnum;;
 	  //~ }
 
       preintensity[j] = intensity;
@@ -290,9 +308,9 @@ DebyeScatter2D::DebyeScatter2D(const ActionOptions&ao):
   }
 
   log.printf("  ATOMS:\n");
-  for(unsigned int i=0; i<ga_lista.size(); ++i) {
+  for(unsigned int i=0; i<atoms_lista.size(); ++i) {
     if ( (i+1) % 25 == 0 ) log.printf("  \n");
-    log.printf("  %d", ga_lista[i].serial());
+    log.printf("  %d", atoms_lista[i].serial());
   }
   log.printf("  \n");
   log.printf("  with CV atom number %d\n",int(qnum),getNumberOfAtoms());
@@ -300,14 +318,25 @@ DebyeScatter2D::DebyeScatter2D(const ActionOptions&ao):
   if(pbc) log.printf("  using periodic boundary conditions\n");
   else    log.printf("  without periodic boundary conditions\n");
   if(usew) log.printf("  using window function to revise finite box\n");
+  //~ if (doLowComm)log.printf("  Using the low communication variant of the algorithm");
   if(doneigh) {
-    log.printf("  using 2D neighbor lists with\n");
-    log.printf("  update every %d steps with plane cutoff %f and axis cutoff\n",nl_st,nl_cut,nl_axis_cut);
+    log.printf("  using neighbor lists with\n");
+    log.printf("  cutoff %f, axis cutoff %f, and skin %f\n",nl_cut,nl_axis_cut,nl_skin);
+    if(nl_st>=0){
+      log.printf("  update every %d steps\n",nl_st);
+    } else {
+      log.printf("  checking every step for dangerous builds and rebuilding as needed\n");
+    }
+    if (nl_full_list) {
+      log.printf("  using a full neighbor list\n");
+    } else {
+      log.printf("  using a half neighbor list\n");
+    }
   }
 
   log.printf("  with X-ray wave length %f, angle %f and Q value %f.\n",lambda,theta,q);
   log.printf("  with atomic form factors %f.\n",fij);
-  log.printf("  with plane upper limied %f and axis upper limit %f.\n", maxr,axis_maxr);
+  log.printf("  with plane upper limied %f and axis upper limited %f.\n", maxr,axis_maxr);
   if(use_grid) log.printf("  with integrated number %d and interval %f.\n", qbin,deltad);
   //~ for(unsigned j=0;j!=qbin;++j)
   //~ {
@@ -319,20 +348,24 @@ DebyeScatter2D::DebyeScatter2D(const ActionOptions&ao):
 
 DebyeScatter2D::~DebyeScatter2D()
 {
+  if (doneigh) {
+     nl->printStats();
+     delete nl;
+  }
 }
 
 void DebyeScatter2D::prepare() {
-  if(nl->getStride()>0) {
-    if(firsttime || (getStep()%nl->getStride()==0)) {
-      requestAtoms(nl->getFullAtomList());
+  if(doneigh && nl->getStride()>0){
+    if(firsttime) {
       invalidateList=true;
       firsttime=false;
+    } else if ( (nl->getStride()>=0) &&  (getStep()%nl->getStride()==0) ){
+      invalidateList=true;
+    } else if ( (nl->getStride()<0) && !(nl->isListStillGood(getPositions())) ){
+      invalidateList=true;
     } else {
-      requestAtoms(nl->getReducedAtomList());
       invalidateList=false;
-      if(getExchangeStep()) error("Neighbor lists should be updated on exchange steps - choose a NL_STRIDE which divides the exchange stride!");
     }
-    if(getExchangeStep()) firsttime=true;
   }
 }
 
@@ -342,11 +375,6 @@ void DebyeScatter2D::calculate()
   double fin_intensity=0.;
   Tensor virial;
   vector<Vector> deriv(getNumberOfAtoms());
-// deriv.resize(getPositions().size());
-
-  if(nl->getStride()>0 && invalidateList) {
-    nl->update(getPositions());
-  }
 
   unsigned stride=comm.Get_size();
   unsigned rank=comm.Get_rank();
@@ -360,72 +388,119 @@ void DebyeScatter2D::calculate()
 
   unsigned nt=OpenMP::getNumThreads();
 
-  const unsigned nn=nl->size();
+  unsigned nnum=qnum*(qnum-1)/2;
+  if(doneigh)
+    nnum=nl->size();
+   
+  const unsigned nn=nnum;
 
   if(nt*stride*10>nn) nt=nn/stride/10;
   if(nt==0)nt=1;
   
   double sum=0;
-
   #pragma omp parallel num_threads(nt)
   {
     std::vector<Vector> omp_deriv(getPositions().size());
     Tensor omp_virial;
 
-    #pragma omp for reduction(+:fin_intensity) nowait
-    for(unsigned int i=rank; i<nn; i+=stride) {
-
-      Vector distance;
-      unsigned i0=nl->getClosePair(i).first;
-      unsigned i1=nl->getClosePair(i).second;
-
-      if(getAbsoluteIndex(i0)==getAbsoluteIndex(i1))
-		  continue;
-
-      if(pbc) {
-        distance=pbcDistance(getPosition(i0),getPosition(i1));
-      } else {
-        distance=delta(getPosition(i0),getPosition(i1));
-      }
+    //~ if (doneigh && !doLowComm)
+    if (doneigh)
+    {
+      if(invalidateList)
+        nl->update(getPositions());
       
-      double axis_dis=distance[axis_id];
-      if(do_axiscut&&fabs(axis_dis)>axis_maxr)
-		continue;
-
-	  distance[axis_id]=0;
-
-      sum+=1.0;
-
-      double dfunc=0.;
-      double dis_mod=std::sqrt(distance[map_id1]*distance[map_id1]+distance[map_id2]*distance[map_id2]);
-      fin_intensity += pairing(dis_mod, dfunc,i0,i1);
-
-      Vector norm_dis(distance/dis_mod);
-      Vector dd(dfunc*norm_dis);
-      Tensor vv(dd,distance);
-      if(nt>1) {
-        omp_deriv[i0]-=dd;
-        omp_deriv[i1]+=dd;
-        omp_virial-=vv;
-      } else {
-        deriv[i0]-=dd;
-        deriv[i1]+=dd;
-        virial-=vv;
+      // Loop over all atoms
+      #pragma omp for reduction(+:fin_intensity) nowait
+      for(unsigned int i=0;i<nl->getNumberOfLocalAtoms();++i)
+      {
+         std::vector<unsigned> neighbors;
+         unsigned i0=nl->getIndexOfLocalAtom(i);
+         neighbors=nl->getNeighbors(i0);
+         Vector position_i0=getPosition(i0);
+         // Loop over neighbors
+         for(unsigned int j=0;j!=neighbors.size();++j)
+         {
+            unsigned i1=neighbors[j];
+            if(getAbsoluteIndex(i0)==getAbsoluteIndex(i1)) continue;
+            
+            Vector distance=pbcDistance(position_i0,getPosition(i1));
+            if(fabs(distance[axis_id])>axis_maxr) continue;
+            
+            sum+=1.0;
+            distance[axis_id]=0;
+            if(nt>1)
+              calc_value(distance,fin_intensity,omp_deriv[i0],omp_deriv[i1],omp_virial);
+            else
+              calc_value(distance,fin_intensity,deriv[i0],deriv[i1],virial);
+         }
       }
-
     }
+    //~ else if (doneigh && doLowComm)
+    //~ {
+      //~ if(invalidateList)
+        //~ nl->update(getPositions());
+      
+      //~ // Loop over all atoms
+      //~ #pragma omp for reduction(+:fin_intensity) nowait
+      //~ for(unsigned int i=0;i<nl->getNumberOfLocalAtoms();++i)
+      //~ {
+         //~ std::vector<unsigned> neighbors;
+         //~ unsigned i0=nl->getIndexOfLocalAtom(i);
+         //~ neighbors=nl->getNeighbors(i0);
+         //~ Vector position_i0=getPosition(i0);
+         //~ // Loop over neighbors
+         //~ for(unsigned int j=0;j!=neighbors.size();++j)
+         //~ {
+            //~ unsigned i1=neighbors[j];
+            //~ if(getAbsoluteIndex(i0)==getAbsoluteIndex(i1)) continue;
+            //~ Vector distance=pbcDistance(position_i0,getPosition(i1));
+            //~ if(fabs(distance[axis_id])>axis_maxr) continue;
+            //~ sum+=1.0;
+            //~ distance[axis_id]=0;
+            //~ if(nt>1)
+              //~ calc_value(distance,fin_intensity,omp_deriv[i0],omp_virial);
+            //~ else
+              //~ calc_value(distance,fin_intensity,deriv[i0],virial);
+         //~ }
+      //~ }
+    //~ }
+    else
+    {
+	  #pragma omp for reduction(+:fin_intensity) nowait
+      for(unsigned int i=rank;i<getNumberOfAtoms();i+=stride)
+      {
+        for(unsigned int j=0;j<i;++j)
+        {
+            Vector distance=pbcDistance(getPosition(i),getPosition(j));
+            if(fabs(distance[axis_id])>axis_maxr) continue;
+            sum+=1.0;
+            distance[axis_id]=0;
+            if(nt>1)
+              calc_value(distance,fin_intensity,omp_deriv[i],omp_deriv[j],omp_virial);
+            else
+              calc_value(distance,fin_intensity,deriv[i],deriv[j],virial);
+        }
+      }
+    }
+    
+    comm.Barrier();
+
     #pragma omp critical
     if(nt>1) {
       for(unsigned i=0; i<getPositions().size(); i++) deriv[i]+=omp_deriv[i];
       virial+=omp_virial;
     }
+    
   }
 
   if(!serial) {
-    comm.Sum(fin_intensity);
-    comm.Sum(sum);
-    if(!deriv.empty()) comm.Sum(&deriv[0][0],3*deriv.size());
-    comm.Sum(virial);
+	//~ if(!doLowComm)
+	//~ {
+       comm.Sum(fin_intensity);
+       comm.Sum(sum);
+       if(!deriv.empty()) comm.Sum(&deriv[0][0],3*deriv.size());
+       comm.Sum(virial);
+    //~ }
   }
   
   fin_intensity+=fij2;
@@ -433,12 +508,45 @@ void DebyeScatter2D::calculate()
   for(unsigned i=0; i<deriv.size(); ++i) setAtomsDerivatives(i,deriv[i]);
   setValue           (fin_intensity);
   setBoxDerivatives  (virial);
+
 }
 
-double DebyeScatter2D::pairing(double distance,double&dfunc,unsigned i,unsigned j)const {
-  (void) i; // avoid warnings
-  (void) j; // avoid warnings
+inline void DebyeScatter2D::calc_value(const Vector& distance,double& value,Vector& deriv0,Vector& deriv1,Tensor& virial)
+{
+  double dfunc=0.;
+  double dis_mod=std::sqrt(distance[map_id1]*distance[map_id1]+distance[map_id2]*distance[map_id2]);
+  double val = pairing(dis_mod, dfunc);
   
+  val*=2;
+  dfunc*=2;
+  
+  value+=val;
+
+  Vector norm_dis(distance/dis_mod);
+  Vector dd(dfunc*norm_dis);
+  Tensor vv(dd,distance);
+    
+  deriv0-=dd;
+  deriv1+=dd;
+  virial-=vv;
+}
+
+inline void DebyeScatter2D::calc_value(const Vector& distance,double& value,Vector& deriv,Tensor& virial)
+{
+  double dfunc=0.;
+  double dis_mod=std::sqrt(distance[map_id1]*distance[map_id1]+distance[map_id2]*distance[map_id2]);
+  value += pairing(dis_mod, dfunc);
+
+  Vector norm_dis(distance/dis_mod);
+  Vector dd(dfunc*norm_dis);
+  Tensor vv(dd,distance);
+    
+  deriv-=2*dd;
+  virial-=vv;
+}
+
+inline double DebyeScatter2D::pairing(double distance,double&dfunc) const
+{
   double r=distance;
   if(r>maxr)
   {
@@ -452,9 +560,9 @@ double DebyeScatter2D::pairing(double distance,double&dfunc,unsigned i,unsigned 
       unsigned q_id=floor(r/deltad);
       dfunc=prederivsf[q_id];
       return preintensity[q_id];
-    }
-    else
-    {
+	}
+	else
+	{
       double qr = q*r;
       double v_ij  = std::tr1::cyl_bessel_j(0,qr);
       double dv_ij = -1.0*q*std::tr1::cyl_bessel_j(1,qr);
@@ -473,8 +581,8 @@ double DebyeScatter2D::pairing(double distance,double&dfunc,unsigned i,unsigned 
       //~ }
       //~ else
       //~ {
-        intensity = 2.0 * fij2 * v_ij / qnum;
-        devrf = 2.0 * fij2 * dv_ij / qnum;;
+        intensity = fij2 * v_ij / qnum;
+        devrf = fij2 * dv_ij / qnum;;
 	  //~ }
       
       dfunc = devrf;
