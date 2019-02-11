@@ -33,10 +33,10 @@ using namespace std;
 NeighborList2D::NeighborList2D(const vector<AtomNumber>& list0, const vector<AtomNumber>& list1,
                            const bool& do_pair, const bool& do_pbc, const Pbc& pbc,
                            const double& distance,
-                           const unsigned& _axis_id,const double& _axis_cut,
+                           const unsigned& _axis_id,const double& _axis_dis,
                            const unsigned& stride): reduced(false),
   do_pair_(do_pair), do_pbc_(do_pbc), pbc_(&pbc),
-  distance_(distance),axis_id(_axis_id),axis_cut(_axis_cut), stride_(stride)
+  distance_(distance),axis_id(_axis_id),axis_dis(_axis_dis), stride_(stride)
 {
 // store full list of atoms needed
   fullatomlist_=list0;
@@ -56,10 +56,10 @@ NeighborList2D::NeighborList2D(const vector<AtomNumber>& list0, const vector<Ato
 
 NeighborList2D::NeighborList2D(const vector<AtomNumber>& list0, const bool& do_pbc,
                            const Pbc& pbc, const double& distance,
-                           const unsigned& _axis_id,const double& _axis_cut,
+                           const unsigned& _axis_id,const double& _axis_dis,
                            const unsigned& stride): reduced(false),
   do_pbc_(do_pbc), pbc_(&pbc),
-  distance_(distance),axis_id(_axis_id),axis_cut(_axis_cut),stride_(stride) {
+  distance_(distance),axis_id(_axis_id),axis_dis(_axis_dis),stride_(stride) {
   fullatomlist_=list0;
   nlist0_=list0.size();
   twolists_=false;
@@ -116,7 +116,7 @@ void NeighborList2D::update(const vector<Vector>& positions) {
     }
     double ax_value=std::fabs(distance[axis_id]);
     double value=distance[map_id1]*distance[map_id1]+distance[map_id2]*distance[map_id2];
-    if(value<=d2&&ax_value<=axis_cut) {neighbors_.push_back(index);}
+    if(value<=d2&&ax_value<=axis_dis) {neighbors_.push_back(index);}
   }
   setRequestList();
 }

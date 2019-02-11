@@ -43,7 +43,7 @@ class NeighborList2D
   double distance_;
 // added by Yi Isaac Yang
   unsigned axis_id,map_id1,map_id2;
-  double axis_cut;
+  double axis_dis;
 // end add
   unsigned stride_,nlist0_,nlist1_,nallpairs_,lastupdate_;
 /// Initialize the neighbor list with all possible pairs
