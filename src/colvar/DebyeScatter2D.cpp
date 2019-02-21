@@ -230,8 +230,8 @@ DebyeScatter2D::DebyeScatter2D(const ActionOptions&ao):
   double nl_axis_cut=axis_maxr+3*nl_axis_skin;
   if(doneigh) {
     parse("NL_CUTOFF",nl_cut);
-    if(nl_cut<=0.0) error("NL_CUTOFF should be explicitly specified and positive");
-    if(nl_cut<maxr) error("NL_CUTOFF should not be smaller than MAXR");
+    if(nl_cut<=0.0) error("NL_CUTOFF ("+std::to_string(nl_cut)+") should be explicitly specified and positive");
+    if(nl_cut<maxr) error("NL_CUTOFF ("+std::to_string(nl_cut)+") should not be smaller than MAXR");
     parse("NL_STRIDE",nl_st);
     if(nl_st<=0) error("NL_STRIDE should be explicitly specified and positive");
     parse("NL_AXIS_CUTOFF",nl_axis_cut);

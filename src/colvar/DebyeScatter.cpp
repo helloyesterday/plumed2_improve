@@ -182,15 +182,16 @@ DebyeScatter::DebyeScatter(const ActionOptions&ao):
 // neighbor list stuff
   doneigh=false;
   bool nl_full_list=false;
-  double nl_cut=0.0;
   double nl_skin;
   int nl_st=0;
   parseFlag("NLIST",doneigh);
   parse("NL_SKIN",nl_skin);
+  
+  double nl_cut=maxr+3*nl_skin;
   if(doneigh) {
     parse("NL_CUTOFF",nl_cut);
-    if(nl_cut<=0.0) error("NL_CUTOFF should be explicitly specified and positive");
-    if(nl_cut<maxr) error("NL_CUTOFF should not be smaller than MAXR");
+    if(nl_cut<=0.0) error("NL_CUTOFF ("+std::to_string(nl_cut)+") should be explicitly specified and positive");
+    if(nl_cut<maxr) error("NL_CUTOFF ("+std::to_string(nl_cut)+") should not be smaller than MAXR");
     parse("NL_STRIDE",nl_st);
     if(nl_st<=0) error("NL_STRIDE should be explicitly specified and positive");
   }
