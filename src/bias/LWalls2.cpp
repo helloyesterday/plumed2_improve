@@ -1,5 +1,5 @@
 /* +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-   Copyright (c) 2012-2017 The plumed team
+   Copyright (c) 2012-2018 The plumed team
    (see the PEOPLE file at the root of the distribution for a list of names)
 
    See http://www.plumed.org for more information.
@@ -29,18 +29,18 @@ using namespace std;
 namespace PLMD {
 namespace bias {
 
-//+PLUMEDOC BIAS LOWER_WALLS2
+//+PLUMEDOC BIAS LOWER_WALLS
 /*
 Defines a wall for the value of one or more collective variables,
  which limits the region of the phase space accessible during the simulation.
 
 The restraining potential starts acting on the system when the value of the CV is greater
-(in the case of LOWER_WALLS2) or lower (in the case of LOWER_WALLS) than a certain limit \f$a_i\f$ (AT)
+(in the case of UPPER_WALLS) or lower (in the case of LOWER_WALLS) than a certain limit \f$a_i\f$ (AT)
 minus an offset \f$o_i\f$ (OFFSET).
 The expression for the bias due to the wall is given by:
 
 \f$
-  \sum_i {k_i}((x_i-a_i+o_i)/s_i)^e_i
+  \sum_i {k_i*d_i}log(1+exp(-2*(a_i-x_i-o_i)/d_i))
 \f$
 
 \f$k_i\f$ (KAPPA) is an energy constant in internal unit of the code, \f$s_i\f$ (EPS) a rescaling factor and
@@ -56,10 +56,11 @@ It also tells plumed to print the energy of the walls.
 \plumedfile
 DISTANCE ATOMS=3,5 LABEL=d1
 DISTANCE ATOMS=2,4 LABEL=d2
-LOWER_WALLS2 ARG=d1,d2 AT=1.0,1.5 KAPPA=150.0,150.0 EXP=2,2 EPS=1,1 OFFSET=0,0 LABEL=uwall
+UPPER_WALLS ARG=d1,d2 AT=1.0,1.5 KAPPA=150.0,150.0 EXP=2,2 EPS=1,1 OFFSET=0,0 LABEL=uwall
 LOWER_WALLS ARG=d1,d2 AT=0.0,1.0 KAPPA=150.0,150.0 EXP=2,2 EPS=1,1 OFFSET=0,0 LABEL=lwall
 PRINT ARG=uwall.bias,lwall.bias
 \endplumedfile
+(See also \ref DISTANCE and \ref PRINT).
 
 */
 //+ENDPLUMEDOC
@@ -67,8 +68,11 @@ PRINT ARG=uwall.bias,lwall.bias
 class LWalls2 : public Bias {
   std::vector<double> at;
   std::vector<double> kappa;
-  std::vector<double> eta;
+  std::vector<double> dep;
   std::vector<double> offset;
+  
+  const double u_lim=154.0*std::log(10.0);
+  const double l_lim=-154.0*std::log(10.0);
 public:
   explicit LWalls2(const ActionOptions&);
   void calculate();
@@ -83,7 +87,7 @@ void LWalls2::registerKeywords(Keywords& keys) {
   keys.add("compulsory","AT","the positions of the wall. The a_i in the expression for a wall.");
   keys.add("compulsory","KAPPA","the force constant for the wall.  The k_i in the expression for a wall.");
   keys.add("compulsory","OFFSET","0.0","the offset for the start of the wall.  The o_i in the expression for a wall.");
-  keys.add("compulsory","ETA","1.0","the values for s_i in the expression for a wall");
+  keys.add("compulsory","DEPTH","0.1","the depth of the walls.  The d_i in the expression for a wall.");
   keys.addOutputComponent("force2","default","the instantaneous value of the squared force due to this bias potential");
 }
 
@@ -91,12 +95,12 @@ LWalls2::LWalls2(const ActionOptions&ao):
   PLUMED_BIAS_INIT(ao),
   at(getNumberOfArguments(),0),
   kappa(getNumberOfArguments(),0.0),
-  eta(getNumberOfArguments(),1.0),
+  dep(getNumberOfArguments(),0.1),
   offset(getNumberOfArguments(),0.0)
 {
-  // Note : the sizes of these vectors are checked automatically by parseVector
+  // Note sizes of these vectors are automatically checked by parseVector :-)
   parseVector("OFFSET",offset);
-  parseVector("ETA",eta);
+  parseVector("DEPTH",dep);
   parseVector("KAPPA",kappa);
   parseVector("AT",at);
   checkRead();
@@ -110,30 +114,39 @@ LWalls2::LWalls2(const ActionOptions&ao):
   log.printf("  with force constant");
   for(unsigned i=0; i<kappa.size(); i++) log.printf(" %f",kappa[i]);
   log.printf("\n");
-  log.printf("  and rescaled");
-  for(unsigned i=0; i<eta.size(); i++) log.printf(" %f",exp[i]);
+  log.printf("  and depth");
+  for(unsigned i=0; i<dep.size(); i++) log.printf(" %f",dep[i]);
   log.printf("\n");
 
   addComponent("force2"); componentIsNotPeriodic("force2");
 }
 
 void LWalls2::calculate() {
-  double ene=0.0;
-  double totf2=0.0;
+  double ene = 0.0;
+  double totf2 = 0.0;
   for(unsigned i=0; i<getNumberOfArguments(); ++i) {
+    double f = 0.0;
     const double cv=difference(i,at[i],getArgument(i));
     const double k=kappa[i];
-    const double et=eta[i];
     const double off=offset[i];
-    const double lscale = 2.0*k/et*(offset-cv);
-    double f = 0.0;
-   
-    double expb = 1.0 + exp(lscale);
-    double expf = 1.0 + exp(-lscale);
-    f = k/expf;
-    ene += 0.5 * et * std::log(expb);
+    const double d0=dep[i];
+    const double cvoff=cv+off;
+    const double lscale = cvoff/d0;
+    if(lscale>u_lim)
+      f = 0;
+	else if(lscale<l_lim)
+	{
+	  f = k;
+      ene += -k * cvoff;
+	}
+	else
+	{
+      const double exp_p2 = std::exp(2*lscale);
+      const double exp_n2 = std::exp(-2*lscale);
+      f = k / (1.0 + exp_p2);
+      ene += 0.5 * k * d0 * std::log(1.0 + exp_n2);
+    }
     totf2 += f * f;
-    
     setOutputForce(i,f);
   }
   setBias(ene);
