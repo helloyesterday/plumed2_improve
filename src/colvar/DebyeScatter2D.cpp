@@ -109,6 +109,7 @@ class DebyeScatter2D : public Colvar {
   bool usew;
   bool use_grid;
   bool doneigh;
+  bool nl_full_list;
   
 // Low communication variant
   //~ bool doLowComm;
@@ -218,7 +219,7 @@ DebyeScatter2D::DebyeScatter2D(const ActionOptions&ao):
 
 // neighbor list stuff
   doneigh=false;
-  bool nl_full_list=false;
+  nl_full_list=false;
   double nl_skin;
   double nl_axis_skin;
   int nl_st=0;
@@ -517,33 +518,42 @@ inline void DebyeScatter2D::calc_value(const Vector& distance,double& value,Vect
   double dis_mod=std::sqrt(distance[map_id1]*distance[map_id1]+distance[map_id2]*distance[map_id2]);
   double val = pairing(dis_mod, dfunc);
   
-  val*=2;
-  dfunc*=2;
-  
-  value+=val;
+  //~ val*=2;
+  //~ dfunc*=2;
 
   Vector norm_dis(distance/dis_mod);
   Vector dd(dfunc*norm_dis);
   Tensor vv(dd,distance);
     
-  deriv0-=dd;
-  deriv1+=dd;
-  virial-=vv;
+  if(nl_full_list)
+  {
+    value+=val;
+    deriv0-=dd;
+    deriv1+=dd;
+    virial-=vv;
+  }
+  else
+  {
+    value+=val*2;
+    deriv0-=dd*2;
+    deriv1+=dd*2;
+    virial-=vv*2;
+  }
 }
 
-inline void DebyeScatter2D::calc_value(const Vector& distance,double& value,Vector& deriv,Tensor& virial)
-{
-  double dfunc=0.;
-  double dis_mod=std::sqrt(distance[map_id1]*distance[map_id1]+distance[map_id2]*distance[map_id2]);
-  value += pairing(dis_mod, dfunc);
+//~ inline void DebyeScatter2D::calc_value(const Vector& distance,double& value,Vector& deriv,Tensor& virial)
+//~ {
+  //~ double dfunc=0.;
+  //~ double dis_mod=std::sqrt(distance[map_id1]*distance[map_id1]+distance[map_id2]*distance[map_id2]);
+  //~ value += pairing(dis_mod, dfunc);
 
-  Vector norm_dis(distance/dis_mod);
-  Vector dd(dfunc*norm_dis);
-  Tensor vv(dd,distance);
+  //~ Vector norm_dis(distance/dis_mod);
+  //~ Vector dd(dfunc*norm_dis);
+  //~ Tensor vv(dd,distance);
     
-  deriv-=2*dd;
-  virial-=vv;
-}
+  //~ deriv-=2*dd;
+  //~ virial-=vv;
+//~ }
 
 inline double DebyeScatter2D::pairing(double distance,double&dfunc) const
 {

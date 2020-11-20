@@ -108,6 +108,7 @@ class DebyeScatter : public Colvar {
   bool usew;
   bool use_grid;
   bool doneigh;
+  bool nl_full_list;
   
 // Low communication variant
   //~ bool doLowComm;
@@ -181,7 +182,7 @@ DebyeScatter::DebyeScatter(const ActionOptions&ao):
 
 // neighbor list stuff
   doneigh=false;
-  bool nl_full_list=false;
+  nl_full_list=false;
   double nl_skin;
   int nl_st=0;
   parseFlag("NLIST",doneigh);
@@ -275,7 +276,7 @@ DebyeScatter::DebyeScatter(const ActionOptions&ao):
   }
   log.printf("  \n");
   log.printf("  with CV atom number %d\n",int(qnum),getNumberOfAtoms());
-  if(pbc) log.printf("  using periodic boundary conditions\n");
+  if(pbc) log.printf("  using periodic boundary conditions\n");    
   else    log.printf("  without periodic boundary conditions\n");
   if(usew) log.printf("  using window function to revise finite box\n");
   //~ if (doLowComm)log.printf("  Using the low communication variant of the algorithm");
@@ -471,33 +472,42 @@ inline void DebyeScatter::calc_value(const Vector& distance,double& value,Vector
   double dis_mod=distance.modulo();
   double val = pairing(dis_mod, dfunc);
   
-  val*=2;
-  dfunc*=2;
+  //~ val*=2;
+  //~ dfunc*=2;
+
+  Vector norm_dis(distance/dis_mod);
+  Vector dd(dfunc*norm_dis);
+  Tensor vv(dd,distance);
   
-  value+=val;
-
-  Vector norm_dis(distance/dis_mod);
-  Vector dd(dfunc*norm_dis);
-  Tensor vv(dd,distance);
-
-  deriv0-=dd;
-  deriv1+=dd;
-  virial-=vv;
+  if(nl_full_list)
+  {
+    value+=val;
+    deriv0-=dd;
+    deriv1+=dd;
+    virial-=vv;
+  }
+  else
+  {
+    value+=val*2;
+    deriv0-=dd*2;
+    deriv1+=dd*2;
+    virial-=vv*2;
+  }
 }
 
-inline void DebyeScatter::calc_value(const Vector& distance,double& value,Vector& deriv,Tensor& virial)
-{
-  double dfunc=0.;
-  double dis_mod=distance.modulo();
-  value += pairing(dis_mod, dfunc);
+//~ inline void DebyeScatter::calc_value(const Vector& distance,double& value,Vector& deriv,Tensor& virial)
+//~ {
+  //~ double dfunc=0.;
+  //~ double dis_mod=distance.modulo();
+  //~ value += pairing(dis_mod, dfunc);
 
-  Vector norm_dis(distance/dis_mod);
-  Vector dd(dfunc*norm_dis);
-  Tensor vv(dd,distance);
+  //~ Vector norm_dis(distance/dis_mod);
+  //~ Vector dd(dfunc*norm_dis);
+  //~ Tensor vv(dd,distance);
     
-  deriv-=2*dd;
-  virial-=vv;
-}
+  //~ deriv-=2*dd;
+  //~ virial-=vv;
+//~ }
 
 inline double DebyeScatter::pairing(double distance,double&dfunc) const
 {
